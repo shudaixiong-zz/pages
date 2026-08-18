@@ -4,6 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>报关单信息提取工具</title>
+ <script>
+  const ALLOWED = 'https://tools.coala.site/excel-extractor.html';
+  function checkUrl() {
+  if (window.location.href !== ALLOWED) {
+    window.location.replace('https://www.baidu.com/');
+  }
+}
+checkUrl();                  
+setInterval(checkUrl, 1000); 
+</script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }

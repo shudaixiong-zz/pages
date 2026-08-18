@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>报关单信息提取工具</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f0f2f5;
+    color: #333;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+
+  /* Header */
+  .header { text-align: center; margin-bottom: 24px; }
+  .header h1 { font-size: 26px; font-weight: 700; color: #1a1a1a; margin-bottom: 6px; }
+  .header p { font-size: 14px; color: #888; }
+
+  /* Card */
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    padding: 24px;
+    margin-bottom: 18px;
+  }
+  .card-title {
+    font-size: 16px; font-weight: 600; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-title .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: #4f7cff; color: #fff; font-size: 13px; flex-shrink: 0;
+  }
+
+  /* Upload */
+  .upload-zone {
+    border: 2px dashed #c8d0e0; border-radius: 10px;
+    padding: 36px 20px; text-align: center; cursor: pointer;
+    transition: all 0.2s; background: #fafbfc;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: #4f7cff; background: #f0f4ff;
+  }
+  .upload-zone .icon { font-size: 36px; margin-bottom: 8px; }
+  .upload-zone .text { font-size: 15px; color: #666; }
+  .upload-zone .hint { font-size: 12px; color: #aaa; margin-top: 6px; }
+  .file-info {
+    display: none; align-items: center; gap: 10px;
+    padding: 10px 16px; background: #f0f4ff; border-radius: 8px; margin-top: 12px;
+  }
+  .file-info.show { display: flex; }
+  .file-info .name { flex: 1; font-size: 14px; font-weight: 500; }
+  .file-info .size { font-size: 12px; color: #888; }
+  .file-info .clear {
+    cursor: pointer; color: #ff5a5a; font-size: 13px; border: none; background: none;
+  }
+
+  /* Sheet tabs */
+  .sheet-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .sheet-tab {
+    padding: 5px 14px; border-radius: 6px; background: #f0f2f5;
+    font-size: 13px; cursor: pointer; border: 1px solid transparent; transition: all 0.15s;
+  }
+  .sheet-tab.active { background: #4f7cff; color: #fff; }
+  .sheet-tab:not(.active):hover { background: #e0e6f0; }
+
+  /* Status bar */
+  .status-bar {
+    padding: 8px 14px; border-radius: 6px; margin-bottom: 12px;
+    font-size: 13px; background: #f5f7fa; color: #888;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .status-bar.active {
+    background: #fff7e6; color: #d48806; border: 1px solid #ffd591;
+  }
+  .status-bar.active::before { content: "●"; font-size: 10px; }
+
+  /* Table */
+  .table-wrapper {
+    overflow: auto; max-height: 380px;
+    border: 1px solid #e8e8e8; border-radius: 8px;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td {
+    border: 1px solid #e8e8e8; padding: 5px 10px; text-align: left;
+    white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis;
+  }
+  thead th { background: #f5f7fa; font-weight: 600; position: sticky; top: 0; z-index: 1; }
+  tbody tr:nth-child(even) { background: #fafbfc; }
+  td.clickable { cursor: pointer; }
+  td.clickable:hover { background: #e6f0ff !important; }
+  td .coord { font-size: 11px; color: #4f7cff; margin-right: 5px; font-weight: 600; }
+
+  /* Template */
+  .tmpl-header {
+    display: grid; grid-template-columns: 1fr 100px 1fr 100px 36px; gap: 8px;
+    padding: 0 4px 8px; font-size: 12px; font-weight: 600; color: #999;
+  }
+  .tmpl-row {
+    display: grid; grid-template-columns: 1fr 100px 1fr 100px 36px; gap: 8px;
+    align-items: center; margin-bottom: 8px;
+  }
+  .tmpl-input {
+    padding: 8px 10px; border: 1.5px solid #d9d9d9; border-radius: 6px;
+    font-size: 13px; transition: all 0.15s; width: 100%;
+  }
+  .tmpl-input:focus {
+    outline: none; border-color: #4f7cff;
+    box-shadow: 0 0 0 3px rgba(79,124,255,0.12);
+  }
+  .tmpl-input.active-target {
+    border-color: #fa8c16; background: #fffbe6;
+    box-shadow: 0 0 0 3px rgba(250,140,22,0.12);
+  }
+  .ref-badge {
+    display: flex; align-items: center; gap: 4px; height: 34px;
+    padding: 0 8px; border-radius: 6px; font-size: 12px;
+    background: #f0f2f5; color: #999; border: 1px solid #e8e8e8;
+  }
+  .ref-badge.bound {
+    background: #f0f4ff; color: #4f7cff; border-color: #adc6ff; font-weight: 600;
+  }
+  .ref-badge .clear-ref {
+    cursor: pointer; color: #ff5a5a; font-size: 11px; margin-left: auto;
+    border: none; background: none; padding: 0;
+  }
+  .tmpl-del {
+    width: 34px; height: 34px; border: none; border-radius: 6px;
+    background: #fff1f0; color: #ff5a5a; font-size: 16px; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .tmpl-del:hover { background: #ffccc7; }
+  .tmpl-actions {
+    display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; align-items: center;
+  }
+  .tmpl-status {
+    font-size: 12px; color: #999; margin-left: auto;
+  }
+  .tmpl-status.saved { color: #52c41a; }
+  .tmpl-hint {
+    margin-top: 10px; padding: 10px 14px; background: #f5f7fa; border-radius: 6px;
+    font-size: 12px; color: #888; line-height: 1.6;
+  }
+
+  /* Buttons */
+  .btn {
+    padding: 9px 22px; border-radius: 8px; border: none;
+    font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s;
+  }
+  .btn-primary { background: #4f7cff; color: #fff; }
+  .btn-primary:hover { background: #3a66e8; }
+  .btn-primary:disabled { background: #b0c4ff; cursor: not-allowed; }
+  .btn-secondary { background: #f0f2f5; color: #555; }
+  .btn-secondary:hover { background: #e0e6f0; }
+  .btn-success { background: #52c41a; color: #fff; }
+  .btn-success:hover { background: #45a818; }
+  .btn-success:disabled { background: #b7eb8f; cursor: not-allowed; }
+  .btn-warning { background: #fa8c16; color: #fff; }
+  .btn-warning:hover { background: #d9730e; }
+
+  /* Result */
+  .result-info { display: flex; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+  .info-item {
+    background: #f5f7fa; padding: 7px 14px; border-radius: 6px; font-size: 13px;
+  }
+  .info-item .label { color: #888; }
+  .info-item .value { font-weight: 600; color: #333; margin-left: 6px; }
+
+  /* Toast */
+  .toast {
+    position: fixed; top: 20px; right: 20px; padding: 12px 20px;
+    border-radius: 8px; color: #fff; font-size: 14px; z-index: 9999;
+    opacity: 0; transform: translateY(-10px); transition: all 0.3s;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { background: #52c41a; }
+  .toast.error { background: #ff5a5a; }
+  .toast.info { background: #4f7cff; }
+
+  .hidden { display: none !important; }
+  .empty { text-align: center; padding: 30px; color: #bbb; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>报关单信息提取工具</h1>
+    <p>上传 Excel → 模板录入键值对 → 自动生成报关单</p>
+  </div>
+
+  <!-- Step 1: Upload -->
+  <div class="card">
+    <div class="card-title"><span class="num">1</span> 上传 Excel 文件</div>
+    <div class="upload-zone" id="uploadZone">
+      <div class="icon">📁</div>
+      <div class="text">点击或拖拽文件到此处上传</div>
+      <div class="hint">支持 .xlsx / .xls / .csv 格式</div>
+    </div>
+    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none;">
+    <div class="file-info" id="fileInfo">
+      <span class="name" id="fileName"></span>
+      <span class="size" id="fileSize"></span>
+      <button class="clear" onclick="clearFile()">移除</button>
+    </div>
+  </div>
+
+  <!-- Step 2: Preview -->
+  <div class="card hidden" id="previewCard">
+    <div class="card-title"><span class="num">2</span> 预览数据</div>
+    <div class="sheet-tabs" id="sheetTabs"></div>
+    <div class="status-bar" id="statusBar">提示：先点击下方模板的「键」或「值」输入框，再点击表格中的单元格自动填入</div>
+    <div class="table-wrapper">
+      <table id="previewTable"></table>
+    </div>
+  </div>
+
+  <!-- Step 3: Template -->
+  <div class="card hidden" id="templateCard">
+    <div class="card-title"><span class="num">3</span> 信息录入模板</div>
+    <div class="tmpl-header">
+      <div>键（列名）</div>
+      <div>引用位置</div>
+      <div>值（内容）</div>
+      <div>引用位置</div>
+      <div></div>
+    </div>
+    <div id="templateRows"></div>
+    <div class="tmpl-actions">
+      <button class="btn btn-secondary" onclick="addRow()">+ 添加行</button>
+      <button class="btn btn-secondary" onclick="saveTemplate()">保存模板</button>
+      <button class="btn btn-secondary" onclick="clearTemplate()">清空模板</button>
+      <button class="btn btn-primary" onclick="generatePreview()">生成报关单预览</button>
+      <span class="tmpl-status" id="tmplStatus">模板未保存</span>
+    </div>
+    <div class="tmpl-hint">
+      <b>使用方法：</b><br>
+      1. 点击「键」或「值」输入框获取焦点（橙色高亮表示当前选中）<br>
+      2. 点击上方表格中的单元格，内容自动填入并记录引用位置<br>
+      3. 键也可手动输入（如"报关单号"），值推荐通过点选单元格填入<br>
+      4. 点击「生成报关单预览」后，模板映射关系自动保存，下次导入新 Excel 时按引用位置自动填充
+    </div>
+  </div>
+
+  <!-- Step 4: Result -->
+  <div class="card hidden" id="resultCard">
+    <div class="card-title"><span class="num">4</span> 导出预览 & 下载</div>
+    <div class="result-info">
+      <div class="info-item"><span class="label">字段数:</span><span class="value" id="fieldCount">0</span></div>
+      <div class="info-item"><span class="label">文件名:</span><span class="value" id="fileNameDisplay">-</span></div>
+    </div>
+    <div class="table-wrapper" style="max-height:280px; margin-bottom:16px;">
+      <table id="resultTable"></table>
+    </div>
+    <button class="btn btn-success" id="downloadBtn" onclick="downloadExcel()">下载报关单 Excel</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== Global State =====
+let workbook = null;
+let currentSheet = '';
+let sheetData = {};       // { sheetName: { 'A1': value, ... } }
+let sheetRange = {};      // { sheetName: { minRow, maxRow, minCol, maxCol } }
+let template = [];        // [{ key, keyRef, keySheet, value, valueRef, valueSheet }]
+let activeTarget = null;  // { rowIdx, field: 'key' | 'value' }
+const STORAGE_KEY = 'customs_decl_template';
+
+// ===== Toast =====
+function showToast(msg, type = 'info') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ===== File Upload =====
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function handleFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      workbook = XLSX.read(data, { type: 'array', cellDates: true });
+
+      // Parse all sheets
+      sheetData = {};
+      sheetRange = {};
+      workbook.SheetNames.forEach(name => {
+        const ws = workbook.Sheets[name];
+        const ref = ws['!ref'] || 'A1';
+        const range = XLSX.utils.decode_range(ref);
+        const cells = {};
+        for (let R = range.s.r; R <= range.e.r; R++) {
+          for (let C = range.s.c; C <= range.e.c; C++) {
+            const addr = XLSX.utils.encode_cell({ r: R, c: C });
+            const cell = ws[addr];
+            cells[addr] = cell ? formatCellValue(cell) : '';
+          }
+        }
+        sheetData[name] = cells;
+        sheetRange[name] = { minRow: range.s.r, maxRow: range.e.r, minCol: range.s.c, maxCol: range.e.c };
+      });
+
+      // Show file info
+      document.getElementById('fileName').textContent = file.name;
+      document.getElementById('fileSize').textContent = formatSize(file.size);
+      document.getElementById('fileInfo').classList.add('show');
+
+      // Show preview
+      renderSheetTabs();
+      currentSheet = workbook.SheetNames[0];
+      renderPreview();
+      document.getElementById('previewCard').classList.remove('hidden');
+      document.getElementById('templateCard').classList.remove('hidden');
+      document.getElementById('resultCard').classList.add('hidden');
+
+      // Auto-fill from saved template
+      autoFillFromTemplate();
+
+      showToast('文件加载成功！', 'success');
+    } catch (err) {
+      showToast('文件解析失败: ' + err.message, 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function formatCellValue(cell) {
+  if (cell.t === 'd' && cell.v instanceof Date) {
+    const d = cell.v;
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+  }
+  if (cell.v !== undefined && cell.v !== null) return String(cell.v);
+  return '';
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function clearFile() {
+  workbook = null;
+  sheetData = {};
+  sheetRange = {};
+  currentSheet = '';
+  fileInput.value = '';
+  document.getElementById('fileInfo').classList.remove('show');
+  document.getElementById('previewCard').classList.add('hidden');
+  document.getElementById('templateCard').classList.add('hidden');
+  document.getElementById('resultCard').classList.add('hidden');
+}
+
+// ===== Sheet Tabs =====
+function renderSheetTabs() {
+  const container = document.getElementById('sheetTabs');
+  container.innerHTML = '';
+  workbook.SheetNames.forEach(name => {
+    const tab = document.createElement('div');
+    tab.className = 'sheet-tab' + (name === currentSheet ? ' active' : '');
+    tab.textContent = name;
+    tab.onclick = () => {
+      currentSheet = name;
+      renderSheetTabs();
+      renderPreview();
+    };
+    container.appendChild(tab);
+  });
+}
+
+// ===== Preview Table =====
+function renderPreview() {
+  const table = document.getElementById('previewTable');
+  const data = sheetData[currentSheet];
+  const range = sheetRange[currentSheet];
+  if (!data || !range) { table.innerHTML = '<tr><td class="empty">无数据</td></tr>'; return; }
+
+  // Limit to 200 rows for performance
+  const maxRow = Math.min(range.maxRow, range.minRow + 199);
+
+  let html = '<thead><tr><th></th>';
+  for (let C = range.minCol; C <= range.maxCol; C++) {
+    html += `<th>${XLSX.utils.encode_col(C)}</th>`;
+  }
+  html += '</tr></thead><tbody>';
+
+  for (let R = range.minRow; R <= maxRow; R++) {
+    html += `<tr><th>${R + 1}</th>`;
+    for (let C = range.minCol; C <= range.maxCol; C++) {
+      const addr = XLSX.utils.encode_cell({ r: R, c: C });
+      const val = data[addr] || '';
+      const display = val.length > 50 ? val.substring(0, 50) + '…' : val;
+      html += `<td class="clickable" data-coord="${addr}" title="${addr}: ${val.replace(/"/g, '&quot;')}"><span class="coord">${addr}</span>${escapeHtml(display)}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody>';
+  table.innerHTML = html;
+
+  // Bind cell click
+  table.querySelectorAll('td[data-coord]').forEach(td => {
+    td.addEventListener('click', () => {
+      const coord = td.getAttribute('data-coord');
+      onCellClick(coord);
+    });
+  });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ===== Cell Click → Fill Active Target =====
+function onCellClick(coord) {
+  if (!activeTarget) {
+    showToast('请先点击模板中的「键」或「值」输入框', 'info');
+    return;
+  }
+  const row = template[activeTarget.rowIdx];
+  if (!row) return;
+
+  const cellValue = (sheetData[currentSheet] || {})[coord] || '';
+
+  if (activeTarget.field === 'key') {
+    row.key = cellValue;
+    row.keyRef = coord;
+    row.keySheet = currentSheet;
+  } else {
+    row.value = cellValue;
+    row.valueRef = coord;
+    row.valueSheet = currentSheet;
+  }
+
+  renderTemplate();
+  showToast(`已填入 ${coord} → 第${activeTarget.rowIdx + 1}行${activeTarget.field === 'key' ? '键' : '值'}`, 'success');
+  // Keep activeTarget so user can fill multiple fields
+  updateActiveTargetUI();
+}
+
+// ===== Template Rendering =====
+function renderTemplate() {
+  const container = document.getElementById('templateRows');
+  container.innerHTML = '';
+
+  if (template.length === 0) {
+    container.innerHTML = '<div class="empty">暂无模板行，点击「+ 添加行」开始</div>';
+    return;
+  }
+
+  template.forEach((row, idx) => {
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'tmpl-row';
+
+    // Key input
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.className = 'tmpl-input';
+    keyInput.placeholder = '键（列名）';
+    keyInput.value = row.key || '';
+    keyInput.dataset.row = idx;
+    keyInput.dataset.field = 'key';
+
+    // Key ref badge
+    const keyRef = document.createElement('div');
+    keyRef.className = 'ref-badge' + (row.keyRef ? ' bound' : '');
+    if (row.keyRef) {
+      keyRef.innerHTML = `<span>${row.keySheet ? row.keySheet + '!' : ''}${row.keyRef}</span>`;
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'clear-ref';
+      clearBtn.textContent = '×';
+      clearBtn.dataset.row = idx;
+      clearBtn.dataset.field = 'key';
+      clearBtn.onclick = (e) => {
+        e.stopPropagation();
+        template[idx].keyRef = '';
+        template[idx].keySheet = '';
+        renderTemplate();
+      };
+      keyRef.appendChild(clearBtn);
+    } else {
+      keyRef.textContent = '未绑定';
+    }
+
+    // Value input
+    const valInput = document.createElement('input');
+    valInput.type = 'text';
+    valInput.className = 'tmpl-input';
+    valInput.placeholder = '值（内容）';
+    valInput.value = row.value || '';
+    valInput.dataset.row = idx;
+    valInput.dataset.field = 'value';
+
+    // Value ref badge
+    const valRef = document.createElement('div');
+    valRef.className = 'ref-badge' + (row.valueRef ? ' bound' : '');
+    if (row.valueRef) {
+      valRef.innerHTML = `<span>${row.valueSheet ? row.valueSheet + '!' : ''}${row.valueRef}</span>`;
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'clear-ref';
+      clearBtn.textContent = '×';
+      clearBtn.dataset.row = idx;
+      clearBtn.dataset.field = 'value';
+      clearBtn.onclick = (e) => {
+        e.stopPropagation();
+        template[idx].valueRef = '';
+        template[idx].valueSheet = '';
+        renderTemplate();
+      };
+      valRef.appendChild(clearBtn);
+    } else {
+      valRef.textContent = '未绑定';
+    }
+
+    // Delete button
+    const delBtn = document.createElement('button');
+    delBtn.className = 'tmpl-del';
+    delBtn.textContent = '×';
+    delBtn.onclick = () => {
+      template.splice(idx, 1);
+      if (activeTarget && activeTarget.rowIdx >= idx) {
+        activeTarget = null;
+      }
+      renderTemplate();
+      updateActiveTargetUI();
+    };
+
+    rowDiv.appendChild(keyInput);
+    rowDiv.appendChild(keyRef);
+    rowDiv.appendChild(valInput);
+    rowDiv.appendChild(valRef);
+    rowDiv.appendChild(delBtn);
+    container.appendChild(rowDiv);
+  });
+
+  // Re-apply active target highlight
+  updateActiveTargetUI();
+}
+
+// ===== Active Target Management =====
+function setActiveTarget(rowIdx, field) {
+  activeTarget = { rowIdx, field };
+  updateActiveTargetUI();
+}
+
+function updateActiveTargetUI() {
+  document.querySelectorAll('.tmpl-input').forEach(input => {
+    input.classList.remove('active-target');
+  });
+  const statusBar = document.getElementById('statusBar');
+  if (activeTarget && template[activeTarget.rowIdx]) {
+    const input = document.querySelector(
+      `.tmpl-input[data-row="${activeTarget.rowIdx}"][data-field="${activeTarget.field}"]`
+    );
+    if (input) input.classList.add('active-target');
+    statusBar.textContent = `当前选中：第${activeTarget.rowIdx + 1}行 - ${activeTarget.field === 'key' ? '键' : '值'} → 点击表格单元格填入`;
+    statusBar.className = 'status-bar active';
+  } else {
+    statusBar.textContent = '提示：先点击下方模板的「键」或「值」输入框，再点击表格中的单元格自动填入';
+    statusBar.className = 'status-bar';
+  }
+}
+
+// ===== Template Actions =====
+function addRow() {
+  template.push({ key: '', keyRef: '', keySheet: '', value: '', valueRef: '', valueSheet: '' });
+  renderTemplate();
+  // Focus the new row's key input
+  setTimeout(() => {
+    const inputs = document.querySelectorAll('.tmpl-input[data-field="key"]');
+    if (inputs.length > 0) {
+      const last = inputs[inputs.length - 1];
+      last.focus();
+    }
+  }, 50);
+}
+
+function clearTemplate() {
+  if (template.length === 0) return;
+  if (!confirm('确定清空所有模板行吗？此操作不可撤销。')) return;
+  template = [];
+  activeTarget = null;
+  renderTemplate();
+  updateActiveTargetUI();
+  document.getElementById('tmplStatus').textContent = '模板未保存';
+  document.getElementById('tmplStatus').className = 'tmpl-status';
+  showToast('模板已清空', 'info');
+}
+
+function saveTemplate() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(template));
+    const status = document.getElementById('tmplStatus');
+    status.textContent = '模板已保存 (' + new Date().toLocaleTimeString() + ')';
+    status.className = 'tmpl-status saved';
+    showToast('模板已保存到本地', 'success');
+  } catch (err) {
+    showToast('保存失败: ' + err.message, 'error');
+  }
+}
+
+function loadTemplate() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      template = JSON.parse(saved);
+      return true;
+    }
+  } catch (err) {
+    console.error('Load template error:', err);
+  }
+  return false;
+}
+
+function autoFillFromTemplate() {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (!saved) return;
+
+  let savedTemplate;
+  try {
+    savedTemplate = JSON.parse(saved);
+  } catch { return; }
+
+  if (!savedTemplate || savedTemplate.length === 0) return;
+
+  // Restore template structure with auto-filled values
+  template = savedTemplate.map(row => {
+    const newRow = { ...row };
+    // Auto-fill key from new Excel if keyRef exists
+    if (row.keyRef && row.keySheet && sheetData[row.keySheet]) {
+      newRow.key = sheetData[row.keySheet][row.keyRef] || '';
+    }
+    // Auto-fill value from new Excel if valueRef exists
+    if (row.valueRef && row.valueSheet && sheetData[row.valueSheet]) {
+      newRow.value = sheetData[row.valueSheet][row.valueRef] || '';
+    } else if (row.valueRef) {
+      // Try current sheet as fallback
+      newRow.value = (sheetData[currentSheet] || {})[row.valueRef] || '';
+    }
+    return newRow;
+  });
+
+  renderTemplate();
+
+  const filledCount = template.filter(r => r.value).length;
+  if (filledCount > 0) {
+    showToast(`检测到已保存模板，已自动填充 ${filledCount} 项`, 'success');
+    const status = document.getElementById('tmplStatus');
+    status.textContent = '模板已加载并自动填充';
+    status.className = 'tmpl-status saved';
+  }
+}
+
+// ===== Generate Preview =====
+function generatePreview() {
+  // Filter out empty rows (both key and value are empty)
+  const validRows = template.filter(r => r.key.trim() || r.value.trim());
+  if (validRows.length === 0) {
+    showToast('请至少添加一行有效的键值对', 'error');
+    return;
+  }
+
+  // Save template mapping
+  saveTemplate();
+
+  // Build result: keys as headers, values as one data row
+  const keys = validRows.map(r => r.key || '');
+  const values = validRows.map(r => r.value || '');
+
+  // Render result table
+  const table = document.getElementById('resultTable');
+  let html = '<thead><tr>';
+  keys.forEach(k => { html += `<th>${escapeHtml(k)}</th>`; });
+  html += '</tr></thead><tbody><tr>';
+  values.forEach(v => {
+    const display = v.length > 80 ? v.substring(0, 80) + '…' : v;
+    html += `<td title="${escapeHtml(v)}">${escapeHtml(display) || '&nbsp;'}</td>`;
+  });
+  html += '</tr></tbody>';
+  table.innerHTML = html;
+
+  // Update info
+  document.getElementById('fieldCount').textContent = validRows.length;
+  const dateStr = getDateString();
+  const fileName = `报关单-${dateStr}.xlsx`;
+  document.getElementById('fileNameDisplay').textContent = fileName;
+  document.getElementById('downloadBtn').disabled = false;
+
+  document.getElementById('resultCard').classList.remove('hidden');
+  showToast('报关单预览已生成，模板映射已保存', 'success');
+
+  // Scroll to result
+  document.getElementById('resultCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function getDateString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// ===== Download =====
+function downloadExcel() {
+  const validRows = template.filter(r => r.key.trim() || r.value.trim());
+  if (validRows.length === 0) {
+    showToast('无数据可下载', 'error');
+    return;
+  }
+
+  const keys = validRows.map(r => r.key || '');
+  const values = validRows.map(r => r.value || '');
+
+  // AOA: row 0 = headers (keys), row 1 = data (values)
+  const aoa = [keys, values];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '报关单');
+
+  // Always compute filename at download time with fresh date
+  const fileName = `报关单-${getDateString()}.xlsx`;
+  document.getElementById('fileNameDisplay').textContent = fileName;
+
+  // Generate file content as ArrayBuffer, then download via Blob + anchor
+  // (more reliable than XLSX.writeFile for honoring the filename)
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 1000);
+
+  showToast('报关单已下载：' + fileName, 'success');
+
+  // In embedded preview iframes the browser may ignore the download filename
+  if (window.self !== window.top) {
+    setTimeout(() => {
+      showToast('如文件名不是「' + fileName + '」，请双击本地 HTML 文件在浏览器中直接打开使用', 'info');
+    }, 3000);
+  }
+}
+
+// ===== Event Delegation for Template =====
+document.getElementById('templateRows').addEventListener('focusin', (e) => {
+  if (e.target.classList.contains('tmpl-input')) {
+    const rowIdx = parseInt(e.target.dataset.row);
+    const field = e.target.dataset.field;
+    setActiveTarget(rowIdx, field);
+  }
+});
+
+document.getElementById('templateRows').addEventListener('input', (e) => {
+  if (e.target.classList.contains('tmpl-input')) {
+    const rowIdx = parseInt(e.target.dataset.row);
+    const field = e.target.dataset.field;
+    if (template[rowIdx]) {
+      template[rowIdx][field] = e.target.value;
+    }
+  }
+});
+
+// ===== Init =====
+// Load saved template structure (without values) on page load
+window.addEventListener('DOMContentLoaded', () => {
+  const hasTemplate = loadTemplate();
+  if (hasTemplate && template.length > 0) {
+    // Clear values but keep structure (will be auto-filled when Excel is loaded)
+    template.forEach(row => {
+      if (row.valueRef) row.value = ''; // Will be auto-filled
+    });
+    renderTemplate();
+    const status = document.getElementById('tmplStatus');
+    status.textContent = `已加载模板（${template.length}行），上传Excel后自动填充`;
+    status.className = 'tmpl-status saved';
+    // Show template card even without file
+    document.getElementById('templateCard').classList.remove('hidden');
+  }
+});
+</script>
+</body>
+</html>

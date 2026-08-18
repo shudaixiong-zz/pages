@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF 固定格式信息提取工具</title>
+  <!-- PDF.js 核心库 -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <!-- SheetJS：用于导出 Excel -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #f0f2f5; color: #333; line-height: 1.6; min-height: 100vh;
+    }
+
+    /* ===== 联网遮罩 ===== */
+    .access-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.92);
+      z-index: 9999;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-size: 18px; text-align: center;
+      flex-direction: column; gap: 16px;
+    }
+    .access-overlay .spinner {
+      width: 40px; height: 40px;
+      border: 4px solid rgba(255,255,255,0.2);
+      border-top-color: #4f8df7;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ===== 布局 ===== */
+    .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+    header { text-align: center; margin-bottom: 24px; }
+    header h1 { font-size: 26px; color: #1a1a2e; margin-bottom: 6px; }
+    header p { color: #888; font-size: 14px; }
+
+    .card {
+      background: #fff; border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      padding: 24px; margin-bottom: 20px;
+    }
+    .card h2 {
+      font-size: 17px; color: #1a1a2e; margin-bottom: 16px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card h2 .num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px; border-radius: 50%;
+      background: #4f8df7; color: #fff; font-size: 13px; flex-shrink: 0;
+    }
+
+    /* ===== 上传区 ===== */
+    .drop-zone {
+      border: 2px dashed #c0c6cf; border-radius: 10px;
+      padding: 36px 20px; text-align: center; cursor: pointer;
+      transition: all 0.25s; position: relative;
+    }
+    .drop-zone:hover { border-color: #4f8df7; background: #f5f9ff; }
+    .drop-zone.dragover { border-color: #4f8df7; background: #eaf2ff; }
+    .drop-zone .icon { font-size: 44px; margin-bottom: 6px; }
+    .drop-zone .hint { color: #888; font-size: 14px; }
+    .drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .drop-zone .filename {
+      margin-top: 6px; font-weight: 600; color: #4f8df7; word-break: break-all;
+    }
+
+    /* ===== 进度条 ===== */
+    .progress-wrap { margin-top: 14px; }
+    .progress-bar { height: 6px; background: #e8eaed; border-radius: 3px; overflow: hidden; }
+    .progress-bar .fill { height: 100%; width: 0; background: #4f8df7; transition: width 0.3s; }
+    .progress-text { font-size: 13px; color: #888; margin-top: 5px; text-align: center; }
+
+    /* ===== PDF 画布预览 ===== */
+    .canvas-wrap {
+      border: 1px solid #e8eaed; border-radius: 8px; overflow: auto;
+      max-height: 620px; background: #fafafa; text-align: center;
+    }
+    #pdfCanvas {
+      max-width: 100%; height: auto; cursor: default;
+      display: inline-block;
+    }
+    .canvas-empty {
+      text-align: center; padding: 60px 20px; color: #bbb; font-size: 14px;
+    }
+    .page-nav {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      margin-bottom: 12px;
+    }
+    .page-nav button {
+      padding: 6px 14px; border: 1px solid #dfe1e6; border-radius: 6px;
+      background: #fff; cursor: pointer; font-size: 14px; color: #333;
+    }
+    .page-nav button:hover:not(:disabled) { border-color: #4f8df7; color: #4f8df7; }
+    .page-nav button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .page-nav .page-info { font-size: 14px; color: #666; min-width: 70px; text-align: center; }
+
+    /* 点击状态栏 */
+    .click-status {
+      margin-top: 10px; padding: 8px 14px; border-radius: 6px;
+      font-size: 13px; background: #f5f7fa; color: #888;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+    .click-status.active {
+      background: #fff8e8; color: #e65100; border: 1px solid #ffcc80;
+    }
+    .click-status .picked {
+      color: #1a1a2e; font-weight: 600;
+    }
+
+    /* ===== OCR 工具栏 ===== */
+    .ocr-toolbar {
+      display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center;
+    }
+    .ocr-progress {
+      font-size: 13px; color: #666; display: flex; align-items: center; gap: 6px;
+    }
+    .ocr-progress .bar {
+      width: 160px; height: 6px; background: #e8eaed; border-radius: 3px; overflow: hidden;
+    }
+    .ocr-progress .bar-fill {
+      height: 100%; background: #4f8df7; transition: width 0.3s; width: 0;
+    }
+    .ocr-hint {
+      margin-top: 8px; padding: 8px 14px; border-radius: 6px; font-size: 13px;
+      background: #fff3e0; color: #e65100; border: 1px solid #ffcc80;
+    }
+
+    /* ===== 模板编辑 ===== */
+    .tmpl-toolbar {
+      display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
+    }
+    .tmpl-row {
+      display: grid;
+      grid-template-columns: 1fr 86px 1fr 86px 32px;
+      gap: 8px; align-items: center; margin-bottom: 8px;
+    }
+    .tmpl-row.header-row { margin-bottom: 10px; }
+    .tmpl-row.header-row span {
+      font-size: 12px; color: #999; text-align: center;
+    }
+    .tmpl-input {
+      padding: 8px 10px; border: 1px solid #dfe1e6; border-radius: 6px;
+      font-size: 13px; outline: none; transition: all 0.2s; width: 100%;
+    }
+    .tmpl-input:focus { border-color: #4f8df7; }
+    .tmpl-input.active-target {
+      border-color: #ff9800; border-width: 2px;
+      background: #fff8e8; padding: 7px 9px;
+    }
+    .ref-badge {
+      font-size: 11px; color: #4f8df7; background: #eaf2ff;
+      padding: 3px 4px; border-radius: 4px; text-align: center;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .ref-badge.empty { color: #ccc; background: #f5f5f5; }
+    .tmpl-del {
+      border: none; background: #ffebee; color: #e53935;
+      border-radius: 6px; cursor: pointer; font-size: 14px;
+      height: 34px; width: 32px; flex-shrink: 0;
+    }
+    .tmpl-del:hover { background: #ffcdd2; }
+    .tmpl-empty {
+      text-align: center; padding: 24px; color: #bbb; font-size: 14px;
+      border: 1px dashed #e0e0e0; border-radius: 8px;
+    }
+
+    /* ===== 按钮 ===== */
+    .btn {
+      padding: 10px 20px; border: none; border-radius: 8px;
+      font-size: 14px; cursor: pointer; transition: all 0.2s;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-primary { background: #4f8df7; color: #fff; }
+    .btn-primary:hover { background: #3a78e6; }
+    .btn-secondary { background: #f0f2f5; color: #333; }
+    .btn-secondary:hover { background: #e4e7eb; }
+    .btn-success { background: #4caf50; color: #fff; }
+    .btn-success:hover { background: #43a047; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .export-bar { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+
+    /* ===== 导出预览 ===== */
+    .preview-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .preview-table th, .preview-table td {
+      border: 1px solid #e8eaed; padding: 8px 10px; text-align: left;
+      word-break: break-all;
+    }
+    .preview-table th { background: #f5f7fa; font-weight: 600; color: #555; }
+
+    /* ===== Toast ===== */
+    .toast {
+      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+      padding: 12px 24px; border-radius: 8px; font-size: 14px;
+      color: #fff; z-index: 10000; opacity: 0;
+      transition: opacity 0.3s, transform 0.3s; pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+    .toast.success { background: #4caf50; }
+    .toast.error { background: #f44336; }
+    .toast.info { background: #2196f3; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<!-- 联网遮罩 -->
+<div class="access-overlay" id="accessOverlay">
+  <div class="spinner"></div>
+  <div id="accessMsg">正在加载组件…</div>
+</div>
+
+<div class="container">
+  <header>
+    <h1>PDF 固定格式信息提取工具</h1>
+    <p>上传固定格式 PDF → 点选文字绑定键值对 → 保存模板 → 同格式 PDF 自动提取并导出 Excel</p>
+  </header>
+
+  <!-- 步骤1：上传 -->
+  <div class="card">
+    <h2><span class="num">1</span> 上传 PDF 文件</h2>
+    <div class="drop-zone" id="dropZone">
+      <div class="icon">📄</div>
+      <div class="hint">点击选择文件或拖拽 PDF 到此处</div>
+      <div class="filename hidden" id="fileNameDisplay"></div>
+      <input type="file" id="fileInput" accept=".pdf,application/pdf">
+    </div>
+    <div class="progress-wrap hidden" id="progressWrap">
+      <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
+      <div class="progress-text" id="progressText">正在解析…</div>
+    </div>
+  </div>
+
+  <!-- 步骤2：PDF 预览（画布 + 点选） -->
+  <div class="card hidden" id="previewCard">
+    <h2><span class="num">2</span> PDF 页面预览（点击文字选取）</h2>
+    <div class="page-nav">
+      <button id="prevPageBtn">上一页</button>
+      <span class="page-info" id="pageInfo">1 / 1</span>
+      <button id="nextPageBtn">下一页</button>
+    </div>
+    <div class="ocr-toolbar">
+      <button class="btn btn-secondary" id="ocrPageBtn">🔍 OCR识别当前页</button>
+      <button class="btn btn-secondary" id="ocrAllBtn">🔍 OCR识别全部页</button>
+      <span class="ocr-progress hidden" id="ocrProgress"></span>
+    </div>
+    <div class="ocr-hint hidden" id="ocrHint">
+      ⚠ 当前页面未检测到文字层（可能是扫描件），请点击「OCR识别当前页」进行文字识别后即可点选
+    </div>
+    <div class="canvas-wrap" id="canvasWrap">
+      <div class="canvas-empty" id="canvasEmpty">请先上传 PDF 文件</div>
+      <canvas id="pdfCanvas" class="hidden"></canvas>
+    </div>
+    <div class="click-status" id="clickStatus">
+      <span>👆 先点击下方模板中的「键」或「值」输入框，再点击 PDF 中的文字即可自动填入</span>
+    </div>
+  </div>
+
+  <!-- 步骤3：模板录入 -->
+  <div class="card hidden" id="templateCard">
+    <h2><span class="num">3</span> 信息录入模板（键值对）</h2>
+    <div class="tmpl-toolbar">
+      <button class="btn btn-primary" id="addRowBtn">＋ 添加一行</button>
+      <button class="btn btn-secondary" id="autoExtractBtn">⚡ 自动提取</button>
+      <button class="btn btn-secondary" id="saveTemplateBtn">💾 保存模板</button>
+      <button class="btn btn-secondary" id="clearTemplateBtn">🗑 清空模板</button>
+    </div>
+    <div id="templateRows">
+      <div class="tmpl-row header-row">
+        <span>键（输出列头）</span><span>键引用</span>
+        <span>值（提取内容）</span><span>值引用</span><span></span>
+      </div>
+    </div>
+    <div class="tmpl-empty" id="tmplEmpty">
+      暂无模板行，点击「添加一行」开始配置。<br>
+      <small style="color:#bbb">配置好后保存模板，下次上传同格式 PDF 会自动提取</small>
+    </div>
+  </div>
+
+  <!-- 步骤4：导出 -->
+  <div class="card hidden" id="exportCard">
+    <h2><span class="num">4</span> 生成与导出</h2>
+    <div class="export-bar">
+      <button class="btn btn-primary" id="previewBtn">📋 生成预览</button>
+      <button class="btn btn-success" id="downloadBtn" disabled>⬇ 下载 Excel</button>
+    </div>
+    <div class="hidden" id="previewWrap" style="margin-top:16px; overflow-x:auto;">
+      <table class="preview-table" id="previewTable"></table>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== 联网访问控制 =====
+const accessOverlay = document.getElementById('accessOverlay');
+const accessMsg = document.getElementById('accessMsg');
+
+function updateOnlineStatus() {
+  if (!navigator.onLine) {
+    accessOverlay.style.display = 'flex';
+    accessOverlay.querySelector('.spinner').style.display = 'none';
+    accessMsg.innerHTML = '⚠ 当前未联网，本工具需要实时联网才能使用<br><span style="font-size:13px;color:#aaa;">请检查网络连接后刷新页面</span>';
+  } else {
+    accessOverlay.querySelector('.spinner').style.display = 'block';
+    accessMsg.textContent = '正在加载组件…';
+    checkLibs();
+  }
+}
+function checkLibs() {
+  if (typeof pdfjsLib !== 'undefined' && typeof XLSX !== 'undefined') {
+    accessOverlay.style.display = 'none';
+  } else {
+    setTimeout(checkLibs, 200);
+  }
+}
+window.addEventListener('online', updateOnlineStatus);
+window.addEventListener('offline', updateOnlineStatus);
+updateOnlineStatus();
+
+// ===== 全局状态 =====
+let pdfDoc = null;               // PDFDocumentProxy
+let currentPage = 1;
+let totalPages = 0;
+const RENDER_SCALE = 1.5;        // 画布渲染缩放倍数
+let savedImageData = null;       // 当前页渲染快照（用于清除高亮）
+let currentPageItems = [];       // 当前页文字块 [{str,x,y,width,fontSize}]
+let allPageItems = {};           // { 页码: [文字块] }
+
+// 模板数据模型：
+// { key, keySource, keyPage, keyX, keyY, keyW,
+//   value, valueSource, valuePage, valueX, valueY, offsetDir }
+let template = [];
+let activeTarget = null;         // { rowIdx, field: 'key'|'value' }
+const STORAGE_KEY = 'pdf_extract_template_v1';
+
+// ===== 工具函数 =====
+function showToast(msg, type = 'info') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast show ${type}`;
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(2) + ' MB';
+}
+function escapeHtml(str) {
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function getDateString() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// ===== 文件上传 =====
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files[0]) handleFile(e.target.files[0]);
+});
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault(); dropZone.classList.add('dragover');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+
+// ===== PDF 解析主流程 =====
+async function handleFile(file) {
+  if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+    showToast('请上传 PDF 格式文件', 'error');
+    return;
+  }
+
+  document.getElementById('fileNameDisplay').textContent =
+    `${file.name}（${formatFileSize(file.size)}）`;
+  document.getElementById('fileNameDisplay').classList.remove('hidden');
+
+  const progressWrap = document.getElementById('progressWrap');
+  const progressFill = document.getElementById('progressFill');
+  const progressText = document.getElementById('progressText');
+  progressWrap.classList.remove('hidden');
+  progressFill.style.width = '10%';
+  progressText.textContent = '正在读取文件…';
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+    progressText.textContent = '正在解析 PDF…';
+    progressFill.style.width = '25%';
+
+    pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    totalPages = pdfDoc.numPages;
+
+    // 提取所有页的文字块（含坐标）
+    allPageItems = {};
+    for (let i = 1; i <= totalPages; i++) {
+      const page = await pdfDoc.getPage(i);
+      const tc = await page.getTextContent();
+      allPageItems[i] = tc.items
+        .filter(it => it.str && it.str.trim() !== '')
+        .map(it => ({
+          str: it.str,
+          x: it.transform[4],
+          y: it.transform[5],
+          width: it.width || Math.max(it.str.length * 6, 10),
+          fontSize: Math.abs(it.transform[3]) || Math.abs(it.transform[0]) || 12,
+        }));
+      progressFill.style.width = (25 + (i / totalPages) * 60) + '%';
+      progressText.textContent = `正在提取文字… ${i}/${totalPages} 页`;
+    }
+
+    progressFill.style.width = '100%';
+    progressText.textContent = `解析完成：共 ${totalPages} 页`;
+
+    // 显示各卡片
+    document.getElementById('previewCard').classList.remove('hidden');
+    document.getElementById('templateCard').classList.remove('hidden');
+    document.getElementById('exportCard').classList.remove('hidden');
+
+    await renderPage(1);
+
+    // 如有保存的模板，自动提取
+    let filled = 0;
+    if (template.length > 0) {
+      filled = autoExtractAll();
+      renderTemplate();
+      if (filled > 0) showToast(`已按模板自动提取 ${filled}/${template.length} 项`, 'success');
+      else showToast('模板锚点在本文档中未匹配到，请手动点选', 'info');
+    }
+
+    setTimeout(() => progressWrap.classList.add('hidden'), 1800);
+  } catch (err) {
+    console.error(err);
+    progressText.textContent = '解析失败：' + (err.message || '未知错误');
+    showToast('PDF 解析失败：' + (err.message || '文件可能已损坏'), 'error');
+  }
+}
+
+// ===== 页面渲染 =====
+async function renderPage(pageNum) {
+  if (!pdfDoc) return;
+  currentPage = pageNum;
+  const page = await pdfDoc.getPage(pageNum);
+  const viewport = page.getViewport({ scale: RENDER_SCALE });
+  const canvas = document.getElementById('pdfCanvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  canvas.classList.remove('hidden');
+  document.getElementById('canvasEmpty').classList.add('hidden');
+
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  savedImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+  currentPageItems = allPageItems[pageNum] || [];
+
+  // 无文字层时显示 OCR 提示
+  const ocrHint = document.getElementById('ocrHint');
+  ocrHint.classList.toggle('hidden', currentPageItems.length > 0);
+
+  document.getElementById('pageInfo').textContent = `${pageNum} / ${totalPages}`;
+  document.getElementById('prevPageBtn').disabled = pageNum <= 1;
+  document.getElementById('nextPageBtn').disabled = pageNum >= totalPages;
+}
+
+document.getElementById('prevPageBtn').addEventListener('click', () => {
+  if (currentPage > 1) renderPage(currentPage - 1);
+});
+document.getElementById('nextPageBtn').addEventListener('click', () => {
+  if (currentPage < totalPages) renderPage(currentPage + 1);
+});
+
+// ===== 画布点击 → 定位文字块 =====
+const pdfCanvas = document.getElementById('pdfCanvas');
+pdfCanvas.addEventListener('click', onCanvasClick);
+
+// 悬停高亮：蓝色实线框标出"将要选中"的文字块
+let hoveredItem = null;
+function drawHover(item) {
+  if (!savedImageData) return;
+  if (hoveredItem === item) return;
+  hoveredItem = item;
+  const ctx = pdfCanvas.getContext('2d');
+  ctx.putImageData(savedImageData, 0, 0);
+  if (item) {
+    const pageH = pdfCanvas.height / RENDER_SCALE;
+    const b = itemBox(item);
+    ctx.strokeStyle = 'rgba(79,141,247,0.95)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(
+      b.left * RENDER_SCALE,
+      (pageH - b.top) * RENDER_SCALE,
+      (b.right - b.left) * RENDER_SCALE,
+      (b.top - b.bottom) * RENDER_SCALE
+    );
+  }
+}
+pdfCanvas.addEventListener('mousemove', (e) => {
+  const item = findItemAtEvent(e);
+  pdfCanvas.style.cursor = item ? 'pointer' : 'default';
+  drawHover(item);
+});
+pdfCanvas.addEventListener('mouseleave', () => drawHover(null));
+
+// 将鼠标事件换算为 PDF 坐标
+function eventToPdfCoords(e) {
+  const rect = pdfCanvas.getBoundingClientRect();
+  const scaleX = pdfCanvas.width / rect.width;
+  const scaleY = pdfCanvas.height / rect.height;
+  const cx = (e.clientX - rect.left) * scaleX;
+  const cy = (e.clientY - rect.top) * scaleY;
+  // PDF 坐标系：原点在左下，Y 向上
+  const pdfX = cx / RENDER_SCALE;
+  const pageH = pdfCanvas.height / RENDER_SCALE;
+  const pdfY = pageH - cy / RENDER_SCALE;
+  return { pdfX, pdfY };
+}
+
+// 计算文字块的可点击包围盒（宽度为 0 时按字数×字号估算）
+function itemBox(it) {
+  const w = (it.width && it.width > 0) ? it.width : it.str.length * it.fontSize * 1.05;
+  return {
+    left: it.x,
+    right: it.x + w,
+    bottom: it.y - it.fontSize * 0.35,
+    top: it.y + it.fontSize * 1.0,
+  };
+}
+
+function findItemAtEvent(e) {
+  const { pdfX, pdfY } = eventToPdfCoords(e);
+  // 1) 先尝试包围盒精确命中（带 2pt 容差）
+  const tol = 2;
+  const hit = currentPageItems.find(it => {
+    const b = itemBox(it);
+    return pdfX >= b.left - tol && pdfX <= b.right + tol && pdfY >= b.bottom && pdfY <= b.top;
+  });
+  if (hit) return hit;
+  // 2) 兜底：取中心距离最近的文字块（点击在文字附近的空隙也能选中）
+  let best = null, bestD = Infinity;
+  for (const it of currentPageItems) {
+    const b = itemBox(it);
+    const cx = (b.left + b.right) / 2;
+    const cy = (b.bottom + b.top) / 2;
+    const d = Math.hypot(pdfX - cx, (pdfY - cy) * 0.7);
+    if (d < bestD) { bestD = d; best = it; }
+  }
+  // 距离超过 4 倍字号视为点击了空白处
+  if (best && bestD < best.fontSize * 4) return best;
+  return null;
+}
+
+function onCanvasClick(e) {
+  const item = findItemAtEvent(e);
+  if (!item) {
+    showToast('未点到文字块，请点击文字附近位置（悬停出现蓝框处即可选中）', 'info');
+    return;
+  }
+
+  // 高亮被点击的文字块
+  highlightItem(item);
+
+  if (!activeTarget) {
+    showToast(`选中文字：「${item.str}」— 请先点击模板中的键/值输入框`, 'info');
+    return;
+  }
+
+  const row = template[activeTarget.rowIdx];
+  if (!row) return;
+
+  if (activeTarget.field === 'key') {
+    row.key = item.str;
+    row.keySource = item.str;
+    row.keyPage = currentPage;
+    row.keyX = item.x;
+    row.keyY = item.y;
+    row.keyW = item.width;
+  } else {
+    row.value = item.str;
+    row.valueSource = item.str;
+    row.valuePage = currentPage;
+    row.valueX = item.x;
+    row.valueY = item.y;
+    // 自动计算偏移方向
+    if (row.keyX !== undefined) row.offsetDir = computeOffsetDir(row);
+  }
+
+  renderTemplate();
+  saveTemplateSilent();
+  showToast(`已填入${activeTarget.field === 'key' ? '键' : '值'}：「${item.str}」`, 'success');
+}
+
+function highlightItem(item) {
+  if (!savedImageData) return;
+  const ctx = pdfCanvas.getContext('2d');
+  ctx.putImageData(savedImageData, 0, 0);
+  const pageH = pdfCanvas.height / RENDER_SCALE;
+  const b = itemBox(item);
+  ctx.strokeStyle = '#ff9800';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 3]);
+  ctx.strokeRect(
+    b.left * RENDER_SCALE,
+    (pageH - b.top) * RENDER_SCALE,
+    (b.right - b.left) * RENDER_SCALE,
+    (b.top - b.bottom) * RENDER_SCALE
+  );
+  ctx.setLineDash([]);
+  hoveredItem = null; // 状态已刷新，悬停缓存作废
+}
+
+// 计算值相对键的偏移方向
+function computeOffsetDir(row) {
+  const fs = 12;
+  const dx = row.valueX - (row.keyX + (row.keyW || 0));
+  const dy = row.valueY - row.keyY; // PDF 中 Y 越大越靠上
+  const tol = fs * 0.5;
+  if (Math.abs(dy) < tol && dx > 0) return 'right';
+  if (dy < -tol && Math.abs(dx) < fs * 3) return 'below';
+  if (dy < -tol && dx > 0) return 'right-below';
+  if (Math.abs(dy) < tol && dx < 0) return 'left';
+  return 'right';
+}
+const OFFSET_LABEL = {
+  'right': '→ 右侧', 'below': '↓ 下方',
+  'right-below': '↘ 右下', 'left': '← 左侧',
+};
+
+// ===== 模板渲染与交互 =====
+document.getElementById('addRowBtn').addEventListener('click', () => {
+  template.push({
+    key: '', keySource: '', keyPage: null, keyX: null, keyY: null, keyW: null,
+    value: '', valueSource: '', valuePage: null, valueX: null, valueY: null,
+    offsetDir: null,
+  });
+  renderTemplate();
+  saveTemplateSilent();
+});
+
+document.getElementById('clearTemplateBtn').addEventListener('click', () => {
+  if (!confirm('确定清空所有模板行？')) return;
+  template = [];
+  localStorage.removeItem(STORAGE_KEY);
+  activeTarget = null;
+  renderTemplate();
+  showToast('模板已清空', 'info');
+});
+
+document.getElementById('saveTemplateBtn').addEventListener('click', () => {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(template));
+  showToast(`模板已保存（${template.length} 行）`, 'success');
+});
+
+function saveTemplateSilent() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(template)); } catch (e) {}
+}
+
+function renderTemplate() {
+  const wrap = document.getElementById('templateRows');
+  // 清掉旧行（保留表头）
+  wrap.querySelectorAll('.tmpl-row:not(.header-row)').forEach(el => el.remove());
+  document.getElementById('tmplEmpty').classList.toggle('hidden', template.length > 0);
+
+  template.forEach((row, idx) => {
+    const div = document.createElement('div');
+    div.className = 'tmpl-row';
+    div.innerHTML = `
+      <input class="tmpl-input" data-row="${idx}" data-field="key"
+        placeholder="键（点PDF填入）" value="${escapeHtml(row.key)}">
+      <span class="ref-badge ${row.keyPage ? '' : 'empty'}">${row.keyPage ? 'P' + row.keyPage : '未绑定'}</span>
+      <input class="tmpl-input" data-row="${idx}" data-field="value"
+        placeholder="值（点PDF填入）" value="${escapeHtml(row.value)}">
+      <span class="ref-badge ${row.valuePage ? '' : 'empty'}">${row.valuePage ? OFFSET_LABEL[row.offsetDir] || 'P' + row.valuePage : '未绑定'}</span>
+      <button class="tmpl-del" data-row="${idx}" title="删除此行">✕</button>`;
+    wrap.appendChild(div);
+  });
+  updateActiveTargetUI();
+}
+
+// 事件委托：输入框焦点 / 手动编辑 / 删除
+document.getElementById('templateRows').addEventListener('focusin', (e) => {
+  if (e.target.classList.contains('tmpl-input')) {
+    activeTarget = {
+      rowIdx: parseInt(e.target.dataset.row),
+      field: e.target.dataset.field,
+    };
+    updateActiveTargetUI();
+  }
+});
+document.getElementById('templateRows').addEventListener('input', (e) => {
+  if (!e.target.classList.contains('tmpl-input')) return;
+  const row = template[parseInt(e.target.dataset.row)];
+  if (row) row[e.target.dataset.field] = e.target.value;
+});
+document.getElementById('templateRows').addEventListener('click', (e) => {
+  if (e.target.classList.contains('tmpl-del')) {
+    template.splice(parseInt(e.target.dataset.row), 1);
+    activeTarget = null;
+    renderTemplate();
+    saveTemplateSilent();
+  }
+});
+
+function updateActiveTargetUI() {
+  document.querySelectorAll('.tmpl-input').forEach(el => {
+    el.classList.toggle('active-target',
+      activeTarget !== null &&
+      parseInt(el.dataset.row) === activeTarget.rowIdx &&
+      el.dataset.field === activeTarget.field);
+  });
+  const status = document.getElementById('clickStatus');
+  if (activeTarget && template[activeTarget.rowIdx]) {
+    status.className = 'click-status active';
+    status.innerHTML = `<span>🎯 当前选中：第 ${activeTarget.rowIdx + 1} 行 — <b>${activeTarget.field === 'key' ? '键' : '值'}</b>，请点击 PDF 页面中的文字</span>`;
+  } else {
+    status.className = 'click-status';
+    status.innerHTML = `<span>👆 先点击模板中的「键」或「值」输入框，再点击 PDF 中的文字即可自动填入</span>`;
+  }
+}
+
+// ===== 锚点自动提取 =====
+document.getElementById('autoExtractBtn').addEventListener('click', () => {
+  if (template.length === 0) { showToast('请先添加模板行', 'info'); return; }
+  if (!pdfDoc) { showToast('请先上传 PDF 文件', 'info'); return; }
+  const n = autoExtractAll();
+  renderTemplate();
+  saveTemplateSilent();
+  showToast(`自动提取完成：${n}/${template.length} 项成功`, n > 0 ? 'success' : 'error');
+});
+
+// 对每行模板执行锚点定位提取，返回成功数
+function autoExtractAll() {
+  let ok = 0;
+  for (const row of template) {
+    const v = autoExtractRow(row);
+    if (v !== null) { row.value = v; row.valueSource = v; ok++; }
+  }
+  return ok;
+}
+
+// 单行提取：文字锚点 + 相对坐标定位
+function autoExtractRow(row) {
+  // 锚点：优先用 keySource（原始点选文字），其次 key
+  const anchorText = (row.keySource || row.key || '').trim();
+  if (!anchorText || row.keyPage === null) return null;
+  const items = allPageItems[row.keyPage] || [];
+
+  // 1) 找出所有包含锚点文字的块
+  const matches = items.filter(it =>
+    it.str.includes(anchorText) || anchorText.includes(it.str));
+  if (matches.length === 0) return null;
+
+  // 2) 多个匹配时，选离记录坐标最近的
+  let anchor = matches[0];
+  if (matches.length > 1 && row.keyX !== null) {
+    anchor = matches.reduce((best, it) => {
+      const dBest = Math.hypot(best.x - row.keyX, best.y - row.keyY);
+      const dIt = Math.hypot(it.x - row.keyX, it.y - row.keyY);
+      return dIt < dBest ? it : best;
+    });
+  }
+
+  // 3) 计算期望值位置（锚点 + 原始相对偏移）
+  const expectedX = anchor.x + ((row.valueX ?? 0) - (row.keyX ?? 0));
+  const expectedY = anchor.y + ((row.valueY ?? 0) - (row.keyY ?? 0));
+  const fs = anchor.fontSize;
+  const tolY = fs * 0.8;
+
+  // 4) 按偏移方向筛候选文字块
+  const anchorEndX = anchor.x + anchor.width;
+  let cands;
+  if (row.offsetDir === 'below') {
+    cands = items.filter(it => it !== anchor &&
+      it.y < anchor.y - fs * 0.4 && it.y > anchor.y - fs * 4 &&
+      Math.abs(it.x - anchor.x) < fs * 4);
+  } else if (row.offsetDir === 'right-below') {
+    cands = items.filter(it => it !== anchor &&
+      it.x > anchorEndX - fs * 0.5 &&
+      it.y < anchor.y - fs * 0.3 && it.y > anchor.y - fs * 4);
+  } else { // right 或默认
+    cands = items.filter(it => it !== anchor &&
+      Math.abs(it.y - anchor.y) < tolY && it.x >= anchorEndX - 5);
+  }
+  if (cands.length === 0) {
+    // 兜底：找期望位置附近最近的块
+    let best = null, bestD = Infinity;
+    for (const it of items) {
+      if (it === anchor) continue;
+      const d = Math.hypot(it.x - expectedX, it.y - expectedY);
+      if (d < bestD) { bestD = d; best = it; }
+    }
+    return best ? best.str : null;
+  }
+
+  // 5) 在候选中优先取离期望位置最近的几个，排序拼接
+  cands.sort((a, b) => {
+    const da = Math.hypot(a.x - expectedX, a.y - expectedY);
+    const db = Math.hypot(b.x - expectedX, b.y - expectedY);
+    return da - db;
+  });
+  const picked = cands.slice(0, 3);  // 最多拼 3 块，避免抓到远处内容
+  picked.sort((a, b) => {
+    if (Math.abs(a.y - b.y) > tolY) return b.y - a.y; // 上方优先
+    return a.x - b.x;                                   // 左→右
+  });
+  let val = '', lastY = null;
+  for (const it of picked) {
+    if (lastY !== null) val += Math.abs(it.y - lastY) > tolY ? '\n' : ' ';
+    val += it.str;
+    lastY = it.y;
+  }
+  return val.trim() || null;
+}
+
+// ===== OCR 识别（扫描件文字识别） =====
+const OCR_SCALE = 3.0;               // OCR 渲染倍数（高分辨率提升识别率）
+let ocrWorker = null;               // Tesseract worker（复用）
+let ocrPagesDone = new Set();       // 已完成 OCR 的页码
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('加载 OCR 引擎失败，请检查网络连接'));
+    document.head.appendChild(s);
+  });
+}
+
+function setOcrProgress(text, pct) {
+  const el = document.getElementById('ocrProgress');
+  el.classList.remove('hidden');
+  if (pct !== undefined) {
+    el.innerHTML = `${text} <span class="bar"><span class="bar-fill" style="width:${pct}%"></span></span> ${pct}%`;
+  } else {
+    el.textContent = text;
+  }
+}
+
+async function ensureOcrWorker() {
+  if (ocrWorker) return ocrWorker;
+  setOcrProgress('正在加载 OCR 引擎（首次约 2MB）…');
+  // 动态加载 tesseract.js（不用时不加载，减少首屏开销）
+  if (typeof Tesseract === 'undefined') {
+    await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
+  }
+  setOcrProgress('正在加载中文语言模型（首次约 15MB）…');
+  ocrWorker = await Tesseract.createWorker(['chi_sim', 'eng'], 1, {
+    logger: m => {
+      if (m.status === 'recognizing text') {
+        setOcrProgress('识别中…', Math.round(m.progress * 100));
+      } else if (m.status) {
+        setOcrProgress(m.status + '…');
+      }
+    },
+  });
+  return ocrWorker;
+}
+
+// 从 tesseract 返回结构中提取词列表（兼容 v4/v5）
+function extractOcrWords(data) {
+  if (data.words && data.words.length > 0) return data.words;
+  const words = [];
+  if (data.blocks) {
+    for (const blk of data.blocks) {
+      for (const para of (blk.paragraphs || [])) {
+        for (const line of (para.lines || [])) {
+          for (const w of (line.words || [])) words.push(w);
+        }
+      }
+    }
+  }
+  return words;
+}
+
+// 对指定页执行 OCR，返回识别到的文字块数量
+async function ocrPage(pageNum) {
+  if (!pdfDoc) { showToast('请先上传 PDF', 'info'); return 0; }
+  try {
+    const worker = await ensureOcrWorker();
+    const page = await pdfDoc.getPage(pageNum);
+    const viewport = page.getViewport({ scale: OCR_SCALE });
+
+    // 离屏高分辨率画布
+    const off = document.createElement('canvas');
+    off.width = viewport.width;
+    off.height = viewport.height;
+    const offCtx = off.getContext('2d');
+    await page.render({ canvasContext: offCtx, viewport }).promise;
+
+    setOcrProgress(`正在识别第 ${pageNum} 页…`);
+    const { data } = await worker.recognize(off);
+
+    const pageHp = viewport.height / OCR_SCALE;
+    const words = extractOcrWords(data);
+
+    // 将 OCR 词块转为 PDF 坐标文字块（与 pdf.js 格式完全一致）
+    const items = words
+      .filter(w => w.text && w.text.trim() && w.bbox)
+      .map(w => {
+        const fs = Math.max((w.bbox.y1 - w.bbox.y0) / OCR_SCALE, 4);
+        return {
+          str: w.text.trim(),
+          x: w.bbox.x0 / OCR_SCALE,
+          y: (pageHp - w.bbox.y0 / OCR_SCALE) - fs,  // 转为 PDF 坐标系（左下原点，Y 向上）
+          width: (w.bbox.x1 - w.bbox.x0) / OCR_SCALE,
+          fontSize: fs,
+          ocr: true,
+        };
+      });
+
+    if (items.length > 0) {
+      allPageItems[pageNum] = items;
+      ocrPagesDone.add(pageNum);
+    }
+
+    // 如果是当前页，刷新画布使 OCR 文字可点选
+    if (pageNum === currentPage) {
+      currentPageItems = allPageItems[pageNum] || [];
+      document.getElementById('ocrHint').classList.add('hidden');
+      await renderPage(currentPage);
+    }
+
+    return items.length;
+  } catch (err) {
+    console.error('OCR error:', err);
+    showToast(`第 ${pageNum} 页 OCR 失败：${err.message || '未知错误'}`, 'error');
+    return 0;
+  }
+}
+
+document.getElementById('ocrPageBtn').addEventListener('click', async () => {
+  if (!pdfDoc) { showToast('请先上传 PDF', 'info'); return; }
+  const btn = document.getElementById('ocrPageBtn');
+  btn.disabled = true;
+  btn.textContent = '🔍 识别中…';
+  const n = await ocrPage(currentPage);
+  btn.disabled = false;
+  btn.textContent = '🔍 OCR识别当前页';
+  document.getElementById('ocrProgress').classList.add('hidden');
+  if (n > 0) {
+    showToast(`第 ${currentPage} 页 OCR 完成：识别 ${n} 个文字块`, 'success');
+    // 自动提取
+    if (template.length > 0) {
+      const ok = autoExtractAll();
+      renderTemplate();
+      saveTemplateSilent();
+      if (ok > 0) showToast(`已按模板自动提取 ${ok}/${template.length} 项`, 'success');
+    }
+  } else {
+    showToast(`第 ${currentPage} 页 OCR 未识别到文字`, 'info');
+  }
+});
+
+document.getElementById('ocrAllBtn').addEventListener('click', async () => {
+  if (!pdfDoc) { showToast('请先上传 PDF', 'info'); return; }
+  // 找出需要 OCR 的页（无文字层的页）
+  const needOcr = [];
+  for (let i = 1; i <= totalPages; i++) {
+    if (!ocrPagesDone.has(i) && (!allPageItems[i] || allPageItems[i].length === 0)) needOcr.push(i);
+  }
+  if (needOcr.length === 0) { showToast('所有页面已有文字层，无需 OCR', 'info'); return; }
+
+  const btn = document.getElementById('ocrAllBtn');
+  btn.disabled = true;
+  let total = 0;
+  for (let i = 0; i < needOcr.length; i++) {
+    btn.textContent = `🔍 OCR ${i + 1}/${needOcr.length}…`;
+    total += await ocrPage(needOcr[i]);
+  }
+  btn.disabled = false;
+  btn.textContent = '🔍 OCR识别全部页';
+  document.getElementById('ocrProgress').classList.add('hidden');
+  showToast(`OCR 完成：识别 ${needOcr.length} 页，共 ${total} 个文字块`, 'success');
+  // 自动提取
+  if (template.length > 0) {
+    const ok = autoExtractAll();
+    renderTemplate();
+    saveTemplateSilent();
+    if (ok > 0) showToast(`已按模板自动提取 ${ok}/${template.length} 项`, 'success');
+  }
+});
+
+// ===== 导出 =====
+document.getElementById('previewBtn').addEventListener('click', () => {
+  const valid = template.filter(r => r.key.trim() || r.value.trim());
+  if (valid.length === 0) { showToast('无数据，请先配置模板', 'error'); return; }
+
+  const table = document.getElementById('previewTable');
+  table.innerHTML = `
+    <tr>${valid.map(r => `<th>${escapeHtml(r.key)}</th>`).join('')}</tr>
+    <tr>${valid.map(r => `<td>${escapeHtml(r.value)}</td>`).join('')}</tr>`;
+  document.getElementById('previewWrap').classList.remove('hidden');
+  document.getElementById('downloadBtn').disabled = false;
+  saveTemplateSilent();
+  showToast('预览已生成', 'success');
+});
+
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  const valid = template.filter(r => r.key.trim() || r.value.trim());
+  if (valid.length === 0) { showToast('无数据可下载', 'error'); return; }
+
+  const aoa = [
+    valid.map(r => r.key || ''),
+    valid.map(r => r.value || ''),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '提取结果');
+
+  const fileName = `PDF提取结果-${getDateString()}.xlsx`;
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('已下载：' + fileName, 'success');
+});
+
+// ===== 初始化 =====
+window.addEventListener('DOMContentLoaded', () => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const arr = JSON.parse(saved);
+      if (Array.isArray(arr) && arr.length > 0) {
+        template = arr;
+        renderTemplate();
+        showToast(`已载入保存的模板（${template.length} 行），上传 PDF 后自动提取`, 'info');
+      }
+    }
+  } catch (e) { /* 忽略损坏的存储 */ }
+});
+</script>
+</body>
+</html>

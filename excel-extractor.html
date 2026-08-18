@@ -265,6 +265,15 @@
 <div class="toast" id="toast"></div>
 
 <script>
+const ALLOWED = 'https://tools.coala.site/excel-extractor.html';
+function checkUrl() {
+  if (window.location.href !== ALLOWED) {
+    window.location.replace('https://www.baidu.com/');
+  }
+}
+checkUrl();                  
+setInterval(checkUrl, 1000); 
+ 
 // ===== Global State =====
 let workbook = null;
 let currentSheet = '';
